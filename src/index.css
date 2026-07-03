@@ -488,6 +488,92 @@ body {
   text-align: center;
   color: var(--purple-card);
   font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.clash-score {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.clash-tap-btn {
+  width: 100%;
+  min-height: 160px;
+  border: 3px solid var(--purple-card);
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(168, 107, 221, 0.25), rgba(91, 141, 239, 0.15));
+  color: var(--text);
+  font-size: 2rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 0.08s, background 0.15s;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.clash-tap-btn:active:not(:disabled) {
+  transform: scale(0.97);
+  background: rgba(168, 107, 221, 0.35);
+}
+
+.clash-tap-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.clash-tap-btn.tapped {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.optional-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.clash-result-box {
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.clash-result-score {
+  font-size: 1.5rem;
+  font-weight: 800;
+  margin-bottom: 12px;
+}
+
+.clash-round-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.clash-round-chip {
+  font-size: 0.75rem;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.clash-round-chip.win {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.clash-round-chip.lose {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.clash-round-chip.draw {
+  color: var(--text-muted);
 }
 
 /* Modal */

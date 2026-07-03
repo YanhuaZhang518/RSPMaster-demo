@@ -1,5 +1,5 @@
 import { getCardDef, MOVE_LABEL } from '../data/cards';
-import type { Move, PlayerState, RoundResult } from '../types/game';
+import type { ClashRoundWinner, Move, PlayerState, RoundResult } from '../types/game';
 
 const ALL_MOVES: NonNullable<Move>[] = ['rock', 'scissors', 'paper'];
 
@@ -24,15 +24,11 @@ export function getRpsWinner(
   p2Move: Move,
   reversed: boolean,
 ): 'player1' | 'player2' | 'draw' | null {
-  if (!p1Move || !p2Move) {
-    if (!p1Move && !p2Move) return 'draw';
-    if (p1Move && !p2Move) return 'player1';
-    if (!p1Move && p2Move) return 'player2';
-  }
+  if (!p1Move || !p2Move) return null;
   if (p1Move === p2Move) return 'draw';
 
   const wins = reversed ? REVERSED_WINS : NORMAL_WINS;
-  if (wins[p1Move!] === p2Move) return 'player1';
+  if (wins[p1Move] === p2Move) return 'player1';
   return 'player2';
 }
 
@@ -42,6 +38,18 @@ export function isClash(cardId1: string | null, cardId2: string | null): boolean
   const c2 = getCardDef(cardId2);
   if (!c1 || !c2) return false;
   return c1.color === c2.color && c1.level === c2.level;
+}
+
+export function resolveClashRoundWinner(
+  p1TapAt: number | null,
+  p2TapAt: number | null,
+): ClashRoundWinner {
+  if (p1TapAt === null && p2TapAt === null) return 'draw';
+  if (p1TapAt !== null && p2TapAt === null) return 'player1';
+  if (p1TapAt === null && p2TapAt !== null) return 'player2';
+  if (p1TapAt! < p2TapAt!) return 'player1';
+  if (p2TapAt! < p1TapAt!) return 'player2';
+  return 'draw';
 }
 
 interface ActiveCards {
@@ -77,6 +85,7 @@ export function resolveNormalRound(
   p1: PlayerState,
   p2: PlayerState,
   round: number,
+  timerExpired: boolean,
 ): { result: RoundResult; triggerClash: boolean } {
   const p1CardId = p1.selectedCardId;
   const p2CardId = p2.selectedCardId;
@@ -100,7 +109,7 @@ export function resolveNormalRound(
         player1HpAfter: p1.hp,
         player2HpAfter: p2.hp,
         rpsWinner: null,
-        details: ['双方使用同色同等级卡牌，触发碎卡！进入极速猜拳模式。'],
+        details: ['双方使用同色同等级卡牌，触发碎卡！进入连点比拼模式。'],
       },
     };
   }
@@ -144,13 +153,24 @@ export function resolveNormalRound(
     );
   }
 
-  const rpsWinner = getRpsWinner(p1Move, p2Move, active.reversed);
-
   let p1Damage = 0;
   let p2Damage = 0;
 
+  if (timerExpired) {
+    if (!p1.selectedMove) {
+      p1Damage += 1;
+      details.push('玩家1超时未出拳，扣 1 点生命。');
+    }
+    if (!p2.selectedMove) {
+      p2Damage += 1;
+      details.push('玩家2超时未出拳，扣 1 点生命。');
+    }
+  }
+
+  const rpsWinner = getRpsWinner(p1Move, p2Move, active.reversed);
+
   if (rpsWinner === 'player1') {
-    p2Damage = 1;
+    p2Damage += 1;
     details.push('玩家1猜拳胜利，造成 1 点伤害。');
     if (active.p1CardId === 'white1') {
       p2Damage += 1;
@@ -161,7 +181,7 @@ export function resolveNormalRound(
       details.push('【反击】生效，玩家2虽败但反击 1 点伤害。');
     }
   } else if (rpsWinner === 'player2') {
-    p1Damage = 1;
+    p1Damage += 1;
     details.push('玩家2猜拳胜利，造成 1 点伤害。');
     if (active.p2CardId === 'white1') {
       p1Damage += 1;
@@ -171,8 +191,8 @@ export function resolveNormalRound(
       p2Damage += 1;
       details.push('【反击】生效，玩家1虽败但反击 1 点伤害。');
     }
-  } else {
-    details.push('猜拳平局，无基础伤害。');
+  } else if (p1Move && p2Move) {
+    details.push('猜拳平局，无额外伤害。');
   }
 
   if (active.p1CardId === 'white2' && p1Damage > 0) {
@@ -215,21 +235,36 @@ export function resolveClashRound(
   p1: PlayerState,
   p2: PlayerState,
   round: number,
+  p1RoundWins: number,
+  p2RoundWins: number,
+  roundResults: ClashRoundWinner[],
 ): RoundResult {
-  const rpsWinner = getRpsWinner(p1.clashMove, p2.clashMove, false);
-  const details: string[] = ['极速猜拳结算'];
+  const details: string[] = [
+    `碎卡连点结算：玩家1 赢 ${p1RoundWins} 次，玩家2 赢 ${p2RoundWins} 次。`,
+  ];
+
+  roundResults.forEach((winner, i) => {
+    const label =
+      winner === 'player1' ? '玩家1 抢先' :
+      winner === 'player2' ? '玩家2 抢先' : '双方均未点击';
+    details.push(`第 ${i + 1} 轮：${label}`);
+  });
 
   let p1Damage = 0;
   let p2Damage = 0;
+  let rpsWinner: RoundResult['rpsWinner'] = null;
 
-  if (rpsWinner === 'player1') {
+  if (p1RoundWins > p2RoundWins) {
     p2Damage = 1;
-    details.push('玩家1极速猜拳胜利，造成 1 点伤害。');
-  } else if (rpsWinner === 'player2') {
+    rpsWinner = 'player1';
+    details.push('玩家1 连点获胜，造成 1 点伤害。');
+  } else if (p2RoundWins > p1RoundWins) {
     p1Damage = 1;
-    details.push('玩家2极速猜拳胜利，造成 1 点伤害。');
+    rpsWinner = 'player2';
+    details.push('玩家2 连点获胜，造成 1 点伤害。');
   } else {
-    details.push('极速猜拳平局，无伤害。');
+    rpsWinner = 'draw';
+    details.push('连点平局，无伤害。');
   }
 
   const p1HpAfter = Math.max(0, p1.hp - p1Damage);
@@ -237,8 +272,8 @@ export function resolveClashRound(
 
   return {
     round,
-    player1Move: p1.clashMove,
-    player2Move: p2.clashMove,
+    player1Move: null,
+    player2Move: null,
     player1CardId: null,
     player2CardId: null,
     player1CardName: null,
@@ -251,6 +286,11 @@ export function resolveClashRound(
     player2HpAfter: p2HpAfter,
     rpsWinner,
     details,
+    clashTapResult: {
+      player1Wins: p1RoundWins,
+      player2Wins: p2RoundWins,
+      roundResults,
+    },
   };
 }
 
@@ -262,4 +302,5 @@ export function removeUsedCard(handCards: PlayerState['handCards'], cardId: stri
 }
 
 export const ROUND_DURATION_MS = 5000;
-export const CLASH_DURATION_MS = 1500;
+export const CLASH_ROUNDS = 6;
+export const CLASH_ROUND_MS = 200;

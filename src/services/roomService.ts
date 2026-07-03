@@ -9,14 +9,27 @@ import {
 } from 'firebase/database';
 import { db } from '../firebase';
 import { createInitialHand } from '../data/cards';
-import type { Move, PlayerSlot, RoomState } from '../types/game';
+import type { ClashRoundWinner, Move, PlayerSlot, RoomState } from '../types/game';
 import {
-  CLASH_DURATION_MS,
+  CLASH_ROUND_MS,
+  CLASH_ROUNDS,
   removeUsedCard,
   resolveClashRound,
+  resolveClashRoundWinner,
   resolveNormalRound,
   ROUND_DURATION_MS,
 } from '../utils/gameLogic';
+
+function createEmptyClashMode(): RoomState['clashMode'] {
+  return {
+    active: false,
+    roundIndex: 0,
+    roundEndsAt: 0,
+    player1RoundWins: 0,
+    player2RoundWins: 0,
+    roundResults: [],
+  };
+}
 
 function createEmptyPlayer(id: string, name: string) {
   return {
@@ -27,8 +40,7 @@ function createEmptyPlayer(id: string, name: string) {
     selectedMove: null as Move,
     selectedCardId: null as string | null,
     locked: false,
-    clashMove: null as Move,
-    clashLocked: false,
+    clashTapAt: null as number | null,
   };
 }
 
@@ -51,7 +63,7 @@ export async function createRoom(roomId: string, hostId: string, hostName: strin
     },
     round: 1,
     timerEndsAt: 0,
-    clashMode: { active: false, timerEndsAt: 0 },
+    clashMode: createEmptyClashMode(),
     lastResult: null,
     winner: null,
     createdAt: Date.now(),
@@ -102,6 +114,15 @@ export function subscribeRoom(
   return () => off(r);
 }
 
+function resetPlayerRoundState() {
+  return {
+    selectedMove: null,
+    selectedCardId: null,
+    locked: false,
+    clashTapAt: null,
+  };
+}
+
 export async function startGame(roomId: string, hostId: string) {
   const snapshot = await get(roomRef(roomId));
   if (!snapshot.exists()) return;
@@ -119,15 +140,12 @@ export async function startGame(roomId: string, hostId: string) {
     'players/player1/selectedMove': null,
     'players/player1/selectedCardId': null,
     'players/player1/locked': false,
-    'players/player1/clashMove': null,
-    'players/player1/clashLocked': false,
+    'players/player1/clashTapAt': null,
     'players/player2/selectedMove': null,
     'players/player2/selectedCardId': null,
     'players/player2/locked': false,
-    'players/player2/clashMove': null,
-    'players/player2/clashLocked': false,
-    'clashMode/active': false,
-    'clashMode/timerEndsAt': 0,
+    'players/player2/clashTapAt': null,
+    clashMode: createEmptyClashMode(),
   });
 }
 
@@ -149,15 +167,103 @@ export async function lockSelection(roomId: string, slot: PlayerSlot) {
   });
 }
 
-export async function updateClashMove(roomId: string, slot: PlayerSlot, move: Move) {
+export async function registerClashTap(roomId: string, slot: PlayerSlot) {
+  const snapshot = await get(roomRef(roomId));
+  if (!snapshot.exists()) return;
+  const room = snapshot.val() as RoomState;
+  if (room.status !== 'clash' || !room.clashMode.active) return;
+
+  const now = Date.now();
+  if (now > room.clashMode.roundEndsAt) return;
+
+  const player = room.players[slot];
+  if (!player || player.clashTapAt !== null) return;
+
   await update(roomRef(roomId), {
-    [`players/${slot}/clashMove`]: move,
+    [`players/${slot}/clashTapAt`]: now,
   });
 }
 
-export async function lockClashMove(roomId: string, slot: PlayerSlot) {
+async function finishClashRound(
+  roomId: string,
+  room: RoomState,
+  p1: NonNullable<RoomState['players']['player1']>,
+  p2: NonNullable<RoomState['players']['player2']>,
+) {
+  const clashResult = resolveClashRound(
+    p1,
+    p2,
+    room.round,
+    room.clashMode.player1RoundWins,
+    room.clashMode.player2RoundWins,
+    room.clashMode.roundResults,
+  );
+
+  const p1Hand = removeUsedCard(p1.handCards, p1.selectedCardId);
+  const p2Hand = removeUsedCard(p2.handCards, p2.selectedCardId);
+
+  let winner: RoomState['winner'] = null;
+  if (clashResult.player1HpAfter <= 0 && clashResult.player2HpAfter <= 0) winner = null;
+  else if (clashResult.player1HpAfter <= 0) winner = 'player2';
+  else if (clashResult.player2HpAfter <= 0) winner = 'player1';
+
   await update(roomRef(roomId), {
-    [`players/${slot}/clashLocked`]: true,
+    status: winner ? 'finished' : 'result',
+    lastResult: clashResult,
+    winner,
+    'players/player1/hp': clashResult.player1HpAfter,
+    'players/player2/hp': clashResult.player2HpAfter,
+    'players/player1/handCards': p1Hand,
+    'players/player2/handCards': p2Hand,
+    clashMode: createEmptyClashMode(),
+    'players/player1/clashTapAt': null,
+    'players/player2/clashTapAt': null,
+  });
+}
+
+export async function tryAdvanceClash(roomId: string, hostId: string) {
+  const snapshot = await get(roomRef(roomId));
+  if (!snapshot.exists()) return;
+  const room = snapshot.val() as RoomState;
+  if (room.hostId !== hostId) return;
+  if (room.status !== 'clash' || !room.clashMode.active) return;
+
+  const p1 = room.players.player1;
+  const p2 = room.players.player2;
+  if (!p1 || !p2) return;
+
+  const now = Date.now();
+  if (now < room.clashMode.roundEndsAt) return;
+
+  const roundWinner = resolveClashRoundWinner(p1.clashTapAt, p2.clashTapAt);
+  const roundResults: ClashRoundWinner[] = [...room.clashMode.roundResults, roundWinner];
+  const player1RoundWins = room.clashMode.player1RoundWins + (roundWinner === 'player1' ? 1 : 0);
+  const player2RoundWins = room.clashMode.player2RoundWins + (roundWinner === 'player2' ? 1 : 0);
+  const nextRoundIndex = room.clashMode.roundIndex + 1;
+
+  if (nextRoundIndex >= CLASH_ROUNDS) {
+    const updatedRoom: RoomState = {
+      ...room,
+      clashMode: {
+        ...room.clashMode,
+        roundIndex: nextRoundIndex,
+        player1RoundWins,
+        player2RoundWins,
+        roundResults,
+      },
+    };
+    await finishClashRound(roomId, updatedRoom, p1, p2);
+    return;
+  }
+
+  await update(roomRef(roomId), {
+    'clashMode/roundIndex': nextRoundIndex,
+    'clashMode/roundEndsAt': now + CLASH_ROUND_MS,
+    'clashMode/player1RoundWins': player1RoundWins,
+    'clashMode/player2RoundWins': player2RoundWins,
+    'clashMode/roundResults': roundResults,
+    'players/player1/clashTapAt': null,
+    'players/player2/clashTapAt': null,
   });
 }
 
@@ -177,19 +283,23 @@ export async function tryResolveRound(roomId: string, hostId: string) {
   const timerExpired = room.timerEndsAt > 0 && now >= room.timerEndsAt;
   if (!bothLocked && !timerExpired) return;
 
-  const { result, triggerClash } = resolveNormalRound(p1, p2, room.round);
+  const { result, triggerClash } = resolveNormalRound(p1, p2, room.round, timerExpired);
 
   if (triggerClash) {
-    const clashTimerEndsAt = Date.now() + CLASH_DURATION_MS;
+    const roundEndsAt = Date.now() + CLASH_ROUND_MS;
     await update(roomRef(roomId), {
       status: 'clash',
       lastResult: result,
-      'clashMode/active': true,
-      'clashMode/timerEndsAt': clashTimerEndsAt,
-      'players/player1/clashMove': null,
-      'players/player1/clashLocked': false,
-      'players/player2/clashMove': null,
-      'players/player2/clashLocked': false,
+      clashMode: {
+        active: true,
+        roundIndex: 0,
+        roundEndsAt,
+        player1RoundWins: 0,
+        player2RoundWins: 0,
+        roundResults: [],
+      },
+      'players/player1/clashTapAt': null,
+      'players/player2/clashTapAt': null,
     });
     return;
   }
@@ -213,45 +323,6 @@ export async function tryResolveRound(roomId: string, hostId: string) {
   });
 }
 
-export async function tryResolveClash(roomId: string, hostId: string) {
-  const snapshot = await get(roomRef(roomId));
-  if (!snapshot.exists()) return;
-  const room = snapshot.val() as RoomState;
-  if (room.hostId !== hostId) return;
-  if (room.status !== 'clash') return;
-
-  const p1 = room.players.player1;
-  const p2 = room.players.player2;
-  if (!p1 || !p2) return;
-
-  const now = Date.now();
-  const bothLocked = p1.clashLocked && p2.clashLocked;
-  const timerExpired = room.clashMode.timerEndsAt > 0 && now >= room.clashMode.timerEndsAt;
-  if (!bothLocked && !timerExpired) return;
-
-  const clashResult = resolveClashRound(p1, p2, room.round);
-
-  const p1Hand = removeUsedCard(p1.handCards, p1.selectedCardId);
-  const p2Hand = removeUsedCard(p2.handCards, p2.selectedCardId);
-
-  let winner: RoomState['winner'] = null;
-  if (clashResult.player1HpAfter <= 0 && clashResult.player2HpAfter <= 0) winner = null;
-  else if (clashResult.player1HpAfter <= 0) winner = 'player2';
-  else if (clashResult.player2HpAfter <= 0) winner = 'player1';
-
-  await update(roomRef(roomId), {
-    status: winner ? 'finished' : 'result',
-    lastResult: clashResult,
-    winner,
-    'players/player1/hp': clashResult.player1HpAfter,
-    'players/player2/hp': clashResult.player2HpAfter,
-    'players/player1/handCards': p1Hand,
-    'players/player2/handCards': p2Hand,
-    'clashMode/active': false,
-    'clashMode/timerEndsAt': 0,
-  });
-}
-
 export async function nextRound(roomId: string) {
   const newTimerEndsAt = Date.now() + ROUND_DURATION_MS;
   await runTransaction(roomRef(roomId), (room: RoomState | null) => {
@@ -266,8 +337,8 @@ export async function nextRound(roomId: string) {
       timerEndsAt: newTimerEndsAt,
       lastResult: null,
       players: {
-        player1: { ...p1, selectedMove: null, selectedCardId: null, locked: false, clashMove: null, clashLocked: false },
-        player2: { ...p2, selectedMove: null, selectedCardId: null, locked: false, clashMove: null, clashLocked: false },
+        player1: { ...p1, ...resetPlayerRoundState() },
+        player2: { ...p2, ...resetPlayerRoundState() },
       },
     };
   });
@@ -291,7 +362,7 @@ export async function restartGame(roomId: string) {
         player1: createEmptyPlayer(p1.id, p1.name),
         player2: createEmptyPlayer(p2.id, p2.name),
       },
-      clashMode: { active: false, timerEndsAt: 0 },
+      clashMode: createEmptyClashMode(),
     };
   });
 }

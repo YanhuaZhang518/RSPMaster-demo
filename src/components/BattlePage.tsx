@@ -4,6 +4,7 @@ import { Layout } from './Layout';
 import { ResultModal } from './ResultModal';
 import { useRoom } from '../hooks/useRoom';
 import { formatCountdown, useCountdown } from '../hooks/useCountdown';
+import { CLASH_ROUNDS } from '../utils/gameLogic';
 import {
   getCardDef,
   getCardDisplayName,
@@ -13,16 +14,19 @@ import {
 import {
   getPlayerSlot,
   joinRoom,
-  lockClashMove,
   lockSelection,
   nextRound,
-  tryResolveClash,
+  registerClashTap,
+  tryAdvanceClash,
   tryResolveRound,
-  updateClashMove,
   updateSelection,
 } from '../services/roomService';
 import { getOrCreatePlayerId, getPlayerName } from '../utils/storage';
 import type { Move, PlayerSlot } from '../types/game';
+
+function formatMsCountdown(ms: number): string {
+  return (Math.max(0, ms) / 1000).toFixed(1);
+}
 
 export function BattlePage() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -32,7 +36,6 @@ export function BattlePage() {
   const [slot, setSlot] = useState<PlayerSlot | null>(null);
   const [selectedMove, setSelectedMove] = useState<Move>(null);
   const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
-  const [clashMove, setClashMove] = useState<Move>(null);
 
   const isPlaying = room?.status === 'playing';
   const isClash = room?.status === 'clash';
@@ -40,7 +43,7 @@ export function BattlePage() {
   const isHost = room?.hostId === playerId;
 
   const roundRemaining = useCountdown(room?.timerEndsAt ?? 0, !!isPlaying);
-  const clashRemaining = useCountdown(room?.clashMode?.timerEndsAt ?? 0, !!isClash);
+  const clashRoundRemaining = useCountdown(room?.clashMode?.roundEndsAt ?? 0, !!isClash);
 
   useEffect(() => {
     if (!roomId) return;
@@ -62,7 +65,6 @@ export function BattlePage() {
     }
   }, [room, playerId, roomId, navigate]);
 
-  // Host resolves rounds
   useEffect(() => {
     if (!roomId || !isHost || !room) return;
     if (room.status === 'playing') {
@@ -75,17 +77,13 @@ export function BattlePage() {
       }
     }
     if (room.status === 'clash') {
-      const p1 = room.players.player1;
-      const p2 = room.players.player2;
-      const bothLocked = p1?.clashLocked && p2?.clashLocked;
-      const timerDone = room.clashMode.timerEndsAt > 0 && Date.now() >= room.clashMode.timerEndsAt;
-      if (bothLocked || timerDone) {
-        tryResolveClash(roomId, playerId);
+      const timerDone = room.clashMode.roundEndsAt > 0 && Date.now() >= room.clashMode.roundEndsAt;
+      if (timerDone) {
+        tryAdvanceClash(roomId, playerId);
       }
     }
-  }, [room, roomId, isHost, playerId, roundRemaining, clashRemaining]);
+  }, [room, roomId, isHost, playerId, roundRemaining, clashRoundRemaining]);
 
-  // Poll for host resolution when timer expires
   useEffect(() => {
     if (!roomId || !isHost || !room) return;
     if (room.status !== 'playing' && room.status !== 'clash') return;
@@ -94,15 +92,16 @@ export function BattlePage() {
       if (room.status === 'playing') {
         tryResolveRound(roomId, playerId);
       } else if (room.status === 'clash') {
-        tryResolveClash(roomId, playerId);
+        tryAdvanceClash(roomId, playerId);
       }
-    }, 300);
+    }, 100);
     return () => clearInterval(interval);
   }, [roomId, isHost, playerId, room?.status]);
 
   const me = slot ? room?.players[slot] : null;
   const opponent = slot === 'player1' ? room?.players.player2 : room?.players.player1;
-  const isLocked = isPlaying ? me?.locked ?? false : me?.clashLocked ?? false;
+  const isLocked = me?.locked ?? false;
+  const hasTappedThisClashRound = me?.clashTapAt != null;
 
   const handleSelectMove = async (move: Move) => {
     if (!roomId || !slot || isLocked || !isPlaying) return;
@@ -118,21 +117,13 @@ export function BattlePage() {
   };
 
   const handleLock = async () => {
-    if (!roomId || !slot || isLocked) return;
-    if (isPlaying) {
-      await lockSelection(roomId, slot);
-    }
+    if (!roomId || !slot || isLocked || !isPlaying) return;
+    await lockSelection(roomId, slot);
   };
 
-  const handleClashMove = async (move: Move) => {
-    if (!roomId || !slot || isLocked || !isClash) return;
-    setClashMove(move);
-    await updateClashMove(roomId, slot, move);
-  };
-
-  const handleClashLock = async () => {
-    if (!roomId || !slot || isLocked || !isClash) return;
-    await lockClashMove(roomId, slot);
+  const handleClashTap = async () => {
+    if (!roomId || !slot || !isClash || hasTappedThisClashRound) return;
+    await registerClashTap(roomId, slot);
   };
 
   const handleNextRound = useCallback(async () => {
@@ -150,11 +141,17 @@ export function BattlePage() {
 
   const p1 = room.players.player1!;
   const p2 = room.players.player2!;
+  const clashRound = room.clashMode.roundIndex + 1;
+  const myClashWins = slot === 'player1'
+    ? room.clashMode.player1RoundWins
+    : room.clashMode.player2RoundWins;
+  const oppClashWins = slot === 'player1'
+    ? room.clashMode.player2RoundWins
+    : room.clashMode.player1RoundWins;
 
   return (
     <Layout>
       <div className="battle-page">
-        {/* HP Bar */}
         <div className="hp-bar">
           <div className="hp-side">
             <span className="hp-name">{p1.name}{slot === 'player1' ? ' (你)' : ''}</span>
@@ -175,56 +172,41 @@ export function BattlePage() {
           </div>
         </div>
 
-        {/* Timer */}
         {isPlaying && (
           <div className={`timer ${roundRemaining <= 2000 ? 'urgent' : ''}`}>
             ⏱ {formatCountdown(roundRemaining)}s
           </div>
         )}
+
         {isClash && (
           <div className="timer clash-timer urgent">
-            ⚡ 极速猜拳 {formatCountdown(clashRemaining)}s
+            ⚡ 碎卡连点 第 {clashRound}/{CLASH_ROUNDS} 轮 · {formatMsCountdown(clashRoundRemaining)}s
           </div>
         )}
 
-        {/* Opponent status */}
         <div className="opponent-status">
-          对方: {isPlaying ? (opponent?.locked ? '🔒 已锁定' : '⏳ 选择中...') : ''}
-          {isClash ? (opponent?.clashLocked ? '🔒 已锁定' : '⏳ 选择中...') : ''}
+          {isPlaying && `对方: ${opponent?.locked ? '🔒 已锁定' : '⏳ 选择中...'}`}
+          {isClash && `比分 你 ${myClashWins} : ${oppClashWins} 对方 · ${opponent?.clashTapAt ? '对方已点击' : '等待对方点击'}`}
         </div>
 
-        {/* Clash mode */}
         {isClash && (
           <div className="clash-section">
-            <p className="clash-hint">碎卡触发！仅可选择石头/剪刀/布</p>
-            <div className="move-buttons">
-              {(['rock', 'scissors', 'paper'] as const).map((move) => (
-                <button
-                  key={move}
-                  className={`move-btn ${clashMove === move ? 'selected' : ''}`}
-                  onClick={() => handleClashMove(move)}
-                  disabled={isLocked}
-                >
-                  <span className="move-emoji">{MOVE_EMOJI[move]}</span>
-                  <span>{MOVE_LABEL[move]}</span>
-                </button>
-              ))}
+            <p className="clash-hint">每轮 0.2 秒点击窗口，共 6 轮，赢的次数多者获胜</p>
+            <div className="clash-score">
+              <span>你: {myClashWins}</span>
+              <span>VS</span>
+              <span>对方: {oppClashWins}</span>
             </div>
-            {!isLocked ? (
-              <button
-                className="btn btn-primary btn-large lock-btn"
-                onClick={handleClashLock}
-                disabled={!clashMove}
-              >
-                锁定选择
-              </button>
-            ) : (
-              <div className="locked-badge">🔒 已锁定，等待对方...</div>
-            )}
+            <button
+              className={`clash-tap-btn ${hasTappedThisClashRound ? 'tapped' : ''}`}
+              onClick={handleClashTap}
+              disabled={hasTappedThisClashRound || clashRoundRemaining <= 0}
+            >
+              {hasTappedThisClashRound ? '✓ 已点击' : '点击!'}
+            </button>
           </div>
         )}
 
-        {/* Normal round */}
         {isPlaying && (
           <>
             <div className="move-buttons">
@@ -242,7 +224,7 @@ export function BattlePage() {
             </div>
 
             <div className="cards-section">
-              <h3>手牌</h3>
+              <h3>手牌 <span className="optional-label">（可选，不必每回合出牌）</span></h3>
               <div className="card-grid">
                 {me.handCards.map((handCard) => {
                   const def = getCardDef(handCard.cardId);
@@ -273,6 +255,7 @@ export function BattlePage() {
             ) : (
               <div className="locked-badge">🔒 已锁定，等待对方...</div>
             )}
+            <p className="hint-text">超时未出拳将直接扣 1 点生命</p>
           </>
         )}
 

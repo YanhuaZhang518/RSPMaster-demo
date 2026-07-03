@@ -4,6 +4,8 @@ export type CardColor = 'white' | 'blue' | 'purple';
 
 export type RoomStatus = 'waiting' | 'playing' | 'clash' | 'result' | 'finished';
 
+export type ClashRoundWinner = 'player1' | 'player2' | 'draw';
+
 export interface CardDef {
   id: string;
   name: string;
@@ -25,13 +27,19 @@ export interface PlayerState {
   selectedMove: Move;
   selectedCardId: string | null;
   locked: boolean;
-  clashMove: Move;
-  clashLocked: boolean;
+  /** 碎卡当前轮次点击时间戳，null 表示本轮未点击 */
+  clashTapAt: number | null;
 }
 
 export interface ClashMode {
   active: boolean;
-  timerEndsAt: number;
+  /** 当前轮次 0-5 */
+  roundIndex: number;
+  /** 当前 0.2 秒点击窗口结束时间 */
+  roundEndsAt: number;
+  player1RoundWins: number;
+  player2RoundWins: number;
+  roundResults: ClashRoundWinner[];
 }
 
 export interface RoundResult {
@@ -50,12 +58,16 @@ export interface RoundResult {
   player2HpAfter: number;
   rpsWinner: 'player1' | 'player2' | 'draw' | null;
   details: string[];
-  /** 迷惑卡：随机修改对方猜拳选择 */
   confuseEffect?: {
     forPlayer: 'player1' | 'player2';
     targetPlayer: 'player1' | 'player2';
     originalMove: Move;
     confusedMove: Move;
+  };
+  clashTapResult?: {
+    player1Wins: number;
+    player2Wins: number;
+    roundResults: ClashRoundWinner[];
   };
 }
 

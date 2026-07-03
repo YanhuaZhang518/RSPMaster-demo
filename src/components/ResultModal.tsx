@@ -23,6 +23,9 @@ export function ResultModal({ result, mySlot, onNext }: ResultModalProps) {
   const confuse = result.confuseEffect;
   const iUsedConfuse = confuse?.forPlayer === mySlot;
   const iWasConfused = confuse?.targetPlayer === mySlot;
+  const clashTap = result.clashTapResult;
+  const myClashWins = mySlot === 'player1' ? clashTap?.player1Wins : clashTap?.player2Wins;
+  const oppClashWins = mySlot === 'player1' ? clashTap?.player2Wins : clashTap?.player1Wins;
 
   const moveDisplay = (move: typeof myMove) => {
     if (!move) return '未选择';
@@ -41,60 +44,76 @@ export function ResultModal({ result, mySlot, onNext }: ResultModalProps) {
 
   const rpsLabel = () => {
     if (!result.rpsWinner) return null;
-    if (result.rpsWinner === 'draw') return '🤝 猜拳平局';
+    if (result.rpsWinner === 'draw') return '🤝 平局';
     const winner = result.rpsWinner === mySlot ? '你' : '对方';
-    return `${winner}猜拳胜利`;
+    return result.isClashRound ? `${winner}连点获胜` : `${winner}猜拳胜利`;
   };
 
   return (
     <div className="modal-overlay">
       <div className="modal-content result-modal">
         <h2>
-          {result.isClashRound ? '⚡ 极速猜拳结算' : `第 ${result.round} 回合结算`}
+          {result.isClashRound ? '⚡ 碎卡连点结算' : `第 ${result.round} 回合结算`}
         </h2>
 
         {result.clashTriggered && !result.isClashRound && (
-          <div className="clash-banner">💥 碎卡！双方卡牌均无效，进入极速猜拳</div>
+          <div className="clash-banner">💥 碎卡！双方卡牌均无效，进入连点比拼</div>
         )}
 
-        <div className="result-grid">
-          <div className="result-col">
-            <h3>你</h3>
-            <p className="result-move">{moveDisplay(myMove)}</p>
-            {iWasConfused && confuse && (
-              <p className="confuse-hint">
-                🌀 原本 {moveDisplay(confuse.originalMove)} → 被改为 {moveDisplay(confuse.confusedMove)}
-              </p>
-            )}
-            {!result.isClashRound && (
+        {result.isClashRound && clashTap ? (
+          <div className="clash-result-box">
+            <p className="clash-result-score">
+              你 {myClashWins ?? 0} : {oppClashWins ?? 0} 对方
+            </p>
+            <div className="clash-round-list">
+              {clashTap.roundResults.map((winner, i) => {
+                const label =
+                  winner === mySlot ? '你赢' :
+                  winner === 'draw' ? '平' : '对方赢';
+                return (
+                  <span key={i} className={`clash-round-chip ${winner === mySlot ? 'win' : winner === 'draw' ? 'draw' : 'lose'}`}>
+                    {i + 1}:{label}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="result-grid">
+            <div className="result-col">
+              <h3>你</h3>
+              <p className="result-move">{moveDisplay(myMove)}</p>
+              {iWasConfused && confuse && (
+                <p className="confuse-hint">
+                  🌀 原本 {moveDisplay(confuse.originalMove)} → 被改为 {moveDisplay(confuse.confusedMove)}
+                </p>
+              )}
               <p className="result-card">{cardDisplay(myCardId)}</p>
-            )}
-            <p className={`result-hp ${myDamage > 0 ? 'damaged' : ''}`}>
-              ❤️ {myHp} {myDamage > 0 ? `(-${myDamage})` : ''}
-            </p>
-          </div>
-
-          <div className="result-vs-col">
-            <div className="result-vs">VS</div>
-            {rpsLabel() && <div className="rps-label">{rpsLabel()}</div>}
-          </div>
-
-          <div className="result-col">
-            <h3>对方</h3>
-            <p className="result-move">{moveDisplay(oppMove)}</p>
-            {iUsedConfuse && confuse && (
-              <p className="confuse-hint">
-                🌀 对方原本 {moveDisplay(confuse.originalMove)} → 被改为 {moveDisplay(confuse.confusedMove)}
+              <p className={`result-hp ${myDamage > 0 ? 'damaged' : ''}`}>
+                ❤️ {myHp} {myDamage > 0 ? `(-${myDamage})` : ''}
               </p>
-            )}
-            {!result.isClashRound && (
+            </div>
+
+            <div className="result-vs-col">
+              <div className="result-vs">VS</div>
+              {rpsLabel() && <div className="rps-label">{rpsLabel()}</div>}
+            </div>
+
+            <div className="result-col">
+              <h3>对方</h3>
+              <p className="result-move">{moveDisplay(oppMove)}</p>
+              {iUsedConfuse && confuse && (
+                <p className="confuse-hint">
+                  🌀 对方原本 {moveDisplay(confuse.originalMove)} → 被改为 {moveDisplay(confuse.confusedMove)}
+                </p>
+              )}
               <p className="result-card">{cardDisplay(oppCardId)}</p>
-            )}
-            <p className={`result-hp ${oppDamage > 0 ? 'damaged' : ''}`}>
-              ❤️ {oppHp} {oppDamage > 0 ? `(-${oppDamage})` : ''}
-            </p>
+              <p className={`result-hp ${oppDamage > 0 ? 'damaged' : ''}`}>
+                ❤️ {oppHp} {oppDamage > 0 ? `(-${oppDamage})` : ''}
+              </p>
+            </div>
           </div>
-        </div>
+        )}
 
         {result.details.length > 0 && (
           <div className="result-details">
