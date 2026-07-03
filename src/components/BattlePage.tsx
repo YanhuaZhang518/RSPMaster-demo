@@ -40,7 +40,6 @@ export function BattlePage() {
   const isPlaying = room?.status === 'playing';
   const isClash = room?.status === 'clash';
   const isResult = room?.status === 'result';
-  const isHost = room?.hostId === playerId;
 
   const roundRemaining = useCountdown(room?.timerEndsAt ?? 0, !!isPlaying);
   const clashRoundRemaining = useCountdown(room?.clashMode?.roundEndsAt ?? 0, !!isClash);
@@ -66,37 +65,34 @@ export function BattlePage() {
   }, [room, playerId, roomId, navigate]);
 
   useEffect(() => {
-    if (!roomId || !isHost || !room) return;
+    if (!roomId || !room) return;
     if (room.status === 'playing') {
       const p1 = room.players.player1;
       const p2 = room.players.player2;
       const bothLocked = p1?.locked && p2?.locked;
       const timerDone = room.timerEndsAt > 0 && Date.now() >= room.timerEndsAt;
       if (bothLocked || timerDone) {
-        tryResolveRound(roomId, playerId);
+        tryResolveRound(roomId);
       }
     }
     if (room.status === 'clash') {
       const timerDone = room.clashMode.roundEndsAt > 0 && Date.now() >= room.clashMode.roundEndsAt;
       if (timerDone) {
-        tryAdvanceClash(roomId, playerId);
+        tryAdvanceClash(roomId);
       }
     }
-  }, [room, roomId, isHost, playerId, roundRemaining, clashRoundRemaining]);
+  }, [room, roomId, roundRemaining, clashRoundRemaining]);
 
   useEffect(() => {
-    if (!roomId || !isHost || !room) return;
+    if (!roomId || !room) return;
     if (room.status !== 'playing' && room.status !== 'clash') return;
 
     const interval = setInterval(() => {
-      if (room.status === 'playing') {
-        tryResolveRound(roomId, playerId);
-      } else if (room.status === 'clash') {
-        tryAdvanceClash(roomId, playerId);
-      }
-    }, 100);
+      tryResolveRound(roomId);
+      tryAdvanceClash(roomId);
+    }, 200);
     return () => clearInterval(interval);
-  }, [roomId, isHost, playerId, room?.status]);
+  }, [roomId, room?.status]);
 
   const me = slot ? room?.players[slot] : null;
   const opponent = slot === 'player1' ? room?.players.player2 : room?.players.player1;
