@@ -596,11 +596,13 @@ body {
   white-space: nowrap;
 }
 
-.scout-hint {
+.scout-hint,
+.confuse-hint {
   font-size: 0.75rem;
   text-align: center;
   color: var(--blue-card);
   margin-bottom: 4px;
+  line-height: 1.4;
 }
 
 .result-details {

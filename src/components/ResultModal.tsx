@@ -20,10 +20,9 @@ export function ResultModal({ result, mySlot, onNext }: ResultModalProps) {
   const myHp = mySlot === 'player1' ? result.player1HpAfter : result.player2HpAfter;
   const oppHp = mySlot === 'player1' ? result.player2HpAfter : result.player1HpAfter;
 
-  const iScoutedOpp =
-    result.scoutReveal?.forPlayer === mySlot && !!result.scoutReveal.opponentMove;
-  const oppScoutedMe =
-    result.scoutReveal?.forPlayer !== mySlot && !!result.scoutReveal?.opponentMove;
+  const confuse = result.confuseEffect;
+  const iUsedConfuse = confuse?.forPlayer === mySlot;
+  const iWasConfused = confuse?.targetPlayer === mySlot;
 
   const moveDisplay = (move: typeof myMove) => {
     if (!move) return '未选择';
@@ -35,7 +34,6 @@ export function ResultModal({ result, mySlot, onNext }: ResultModalProps) {
     return getCardDisplayName(cardId);
   };
 
-  // Auto-advance after timeout so non-host is never permanently stuck
   useEffect(() => {
     const t = setTimeout(onNext, AUTO_ADVANCE_MS);
     return () => clearTimeout(t);
@@ -63,6 +61,11 @@ export function ResultModal({ result, mySlot, onNext }: ResultModalProps) {
           <div className="result-col">
             <h3>你</h3>
             <p className="result-move">{moveDisplay(myMove)}</p>
+            {iWasConfused && confuse && (
+              <p className="confuse-hint">
+                🌀 原本 {moveDisplay(confuse.originalMove)} → 被改为 {moveDisplay(confuse.confusedMove)}
+              </p>
+            )}
             {!result.isClashRound && (
               <p className="result-card">{cardDisplay(myCardId)}</p>
             )}
@@ -77,17 +80,19 @@ export function ResultModal({ result, mySlot, onNext }: ResultModalProps) {
           </div>
 
           <div className="result-col">
-            <h3>对方{oppScoutedMe ? ' 👁️' : ''}</h3>
+            <h3>对方</h3>
             <p className="result-move">{moveDisplay(oppMove)}</p>
+            {iUsedConfuse && confuse && (
+              <p className="confuse-hint">
+                🌀 对方原本 {moveDisplay(confuse.originalMove)} → 被改为 {moveDisplay(confuse.confusedMove)}
+              </p>
+            )}
             {!result.isClashRound && (
               <p className="result-card">{cardDisplay(oppCardId)}</p>
             )}
             <p className={`result-hp ${oppDamage > 0 ? 'damaged' : ''}`}>
               ❤️ {oppHp} {oppDamage > 0 ? `(-${oppDamage})` : ''}
             </p>
-            {iScoutedOpp && (
-              <p className="scout-hint">🔍 侦查卡获知对方出拳</p>
-            )}
           </div>
         </div>
 

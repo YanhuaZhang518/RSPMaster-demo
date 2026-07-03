@@ -50,10 +50,12 @@ export interface RoundResult {
   player2HpAfter: number;
   rpsWinner: 'player1' | 'player2' | 'draw' | null;
   details: string[];
-  /** 侦查卡：仅对使用侦查的玩家展示对方出拳 */
-  scoutReveal?: {
+  /** 迷惑卡：随机修改对方猜拳选择 */
+  confuseEffect?: {
     forPlayer: 'player1' | 'player2';
-    opponentMove: Move;
+    targetPlayer: 'player1' | 'player2';
+    originalMove: Move;
+    confusedMove: Move;
   };
 }
 

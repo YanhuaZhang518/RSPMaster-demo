@@ -1,5 +1,11 @@
-import { getCardDef } from '../data/cards';
+import { getCardDef, MOVE_LABEL } from '../data/cards';
 import type { Move, PlayerState, RoundResult } from '../types/game';
+
+const ALL_MOVES: NonNullable<Move>[] = ['rock', 'scissors', 'paper'];
+
+function randomMove(): NonNullable<Move> {
+  return ALL_MOVES[Math.floor(Math.random() * ALL_MOVES.length)];
+}
 
 const NORMAL_WINS: Record<NonNullable<Move>, NonNullable<Move>> = {
   rock: 'scissors',
@@ -44,8 +50,8 @@ interface ActiveCards {
   p1Sealed: boolean;
   p2Sealed: boolean;
   reversed: boolean;
-  p1Scout: boolean;
-  p2Scout: boolean;
+  p1Confuse: boolean;
+  p2Confuse: boolean;
 }
 
 function resolveActiveCards(
@@ -62,8 +68,8 @@ function resolveActiveCards(
     p2Sealed,
     reversed:
       (!p1Sealed && p1CardId === 'purple1') || (!p2Sealed && p2CardId === 'purple1'),
-    p1Scout: !p1Sealed && p1CardId === 'blue2',
-    p2Scout: !p2Sealed && p2CardId === 'blue2',
+    p1Confuse: !p1Sealed && p1CardId === 'blue2',
+    p2Confuse: !p2Sealed && p2CardId === 'blue2',
   };
 }
 
@@ -106,7 +112,39 @@ export function resolveNormalRound(
   if (active.p2Sealed && p1CardId) details.push('玩家2使用【封印】，玩家1卡牌失效。');
   if (active.reversed) details.push('【规则逆转】生效，克制关系反转。');
 
-  const rpsWinner = getRpsWinner(p1.selectedMove, p2.selectedMove, active.reversed);
+  let p1Move = p1.selectedMove;
+  let p2Move = p2.selectedMove;
+  let confuseEffect: RoundResult['confuseEffect'];
+
+  if (active.p1Confuse && p2Move) {
+    const original = p2Move;
+    const confused = randomMove();
+    confuseEffect = {
+      forPlayer: 'player1',
+      targetPlayer: 'player2',
+      originalMove: original,
+      confusedMove: confused,
+    };
+    p2Move = confused;
+    details.push(
+      `玩家1使用【迷惑】，玩家2的出拳被随机改为 ${MOVE_LABEL[confused]}（原本为 ${MOVE_LABEL[original]}）。`,
+    );
+  } else if (active.p2Confuse && p1Move) {
+    const original = p1Move;
+    const confused = randomMove();
+    confuseEffect = {
+      forPlayer: 'player2',
+      targetPlayer: 'player1',
+      originalMove: original,
+      confusedMove: confused,
+    };
+    p1Move = confused;
+    details.push(
+      `玩家2使用【迷惑】，玩家1的出拳被随机改为 ${MOVE_LABEL[confused]}（原本为 ${MOVE_LABEL[original]}）。`,
+    );
+  }
+
+  const rpsWinner = getRpsWinner(p1Move, p2Move, active.reversed);
 
   let p1Damage = 0;
   let p2Damage = 0;
@@ -153,8 +191,8 @@ export function resolveNormalRound(
 
   const result: RoundResult = {
     round,
-    player1Move: p1.selectedMove,
-    player2Move: p2.selectedMove,
+    player1Move: p1Move,
+    player2Move: p2Move,
     player1CardId: p1CardId,
     player2CardId: p2CardId,
     player1CardName: p1CardId ? getCardDef(p1CardId)?.name ?? null : null,
@@ -167,13 +205,8 @@ export function resolveNormalRound(
     player2HpAfter: p2HpAfter,
     rpsWinner,
     details,
+    confuseEffect,
   };
-
-  if (active.p1Scout && p2.selectedMove) {
-    result.scoutReveal = { forPlayer: 'player1', opponentMove: p2.selectedMove };
-  } else if (active.p2Scout && p1.selectedMove) {
-    result.scoutReveal = { forPlayer: 'player2', opponentMove: p1.selectedMove };
-  }
 
   return { result, triggerClash: false };
 }

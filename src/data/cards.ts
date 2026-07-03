@@ -31,10 +31,10 @@ export const CARD_DEFS: Record<string, CardDef> = {
   },
   blue2: {
     id: 'blue2',
-    name: '侦查',
+    name: '迷惑',
     color: 'blue',
     level: 2,
-    description: '显示对方本回合选择的石头/剪刀/布（结算界面展示）。',
+    description: '结算时随机修改对方本回合的猜拳选择（即使对方已锁定）。',
   },
   purple1: {
     id: 'purple1',
